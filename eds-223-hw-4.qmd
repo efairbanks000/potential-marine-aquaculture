@@ -1,0 +1,139 @@
+---
+title: "Homework Assignment #4"
+subtitle: "Prioritizing Potential Aquaculture"
+author: "Eric Fairbanks"
+date: 11-14-2024
+execute: 
+  eval: true
+format:
+  html:
+    toc: true
+    warning: false
+    error: false
+    message: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tmap)
+library(tidyverse)
+library(dplyr)
+library(sf)
+library(here)
+library(terra)
+library(kableExtra)
+```
+
+```{r}
+#load in data
+sst_2008 <- rast(here("data", "average_annual_sst_2008.tif"))
+sst_2009 <- rast(here("data", "average_annual_sst_2009.tif"))
+sst_2010 <- rast(here("data", "average_annual_sst_2010.tif"))
+sst_2011 <- rast(here("data", "average_annual_sst_2011.tif"))
+sst_2012 <- rast(here("data", "average_annual_sst_2012.tif"))
+depth <- rast(here("data", "depth.tif"))
+eez <- st_read(here("data", "wc_regions_clean.shp")) #exclusive economic zones
+
+#raster stack of sst
+sst_stack <- c(sst_2008, sst_2009, sst_2010, sst_2011, sst_2012)
+```
+
+```{r}
+#mean raster from sst raster_stack
+mean_sst <- app(sst_stack, fun = mean) %>%
+  project("EPSG:4326")
+#convert to celsius
+mean_sst <- mean_sst - 273.15
+
+#crop depth to extens of sst
+depth_new <- crop(depth, mean_sst) %>%
+  resample(mean_sst, method = "near")
+
+#check to see if depth and sst match
+stack_check <- c(depth_new, mean_sst)
+#success
+```
+
+```{r}
+#find optimal locations for oysters
+#11 - 30 C
+#-70 - 0 m
+
+#resample sst to oyster conditions, 1 optimal, 0 not optimal
+oyster_sst_rcl <- matrix(c(11, 30, 1,
+                       0, 11, 0,
+                       30, Inf, 0),
+                     ncol = 3, byrow = TRUE)
+
+oyster_sst <- classify(mean_sst, oyster_sst_rcl)
+
+#resample depth to oyster conditions, 1 optimal, 0 not optimal
+oyster_depth_rcl <- matrix(c(-70, 0, 1,
+                             -Inf, -70, 0,
+                             0, Inf, 0),
+                           ncol = 3, byrow = TRUE)
+
+oyster_depth <- classify(depth_new, oyster_depth_rcl)
+```
+
+```{r}
+#use map algebra to find suitable locations
+oyster_locations <- oyster_sst * oyster_depth
+```
+
+```{r}
+#rasterize eez data so we can do zonal analysis
+eez_oyster_raster <- rasterize(eez, oyster_locations
+                               , field = "rgn")
+
+#calculate cell areas
+cell_area <- cellSize(oyster_locations, unit = "m")
+
+#combine suitable oyster locations with eez zones
+oyster_eez_zones <- oyster_locations * eez_oyster_raster
+
+#find total area of suitable space by eez
+suitable_area_by_eez <- zonal(cell_area * (oyster_eez_zones > 0), eez_oyster_raster, fun = "sum", na.rm = TRUE)
+```
+
+```{r}
+#create dataframe that holds suitable area and geometry of eez
+suitable_area_with_geometry <- suitable_area_by_eez %>%
+  left_join(eez %>% select(rgn, geometry), by = "rgn") %>%
+  mutate(area_km2 = area / 1e6) %>%
+  st_as_sf()
+
+#map of suitable area
+tm_shape(suitable_area_with_geometry) +
+  tm_fill(col = "area_km2", title = "Suitable Area (km²)", palette = "Blues") +
+  tm_borders() +
+  tm_layout(
+    main.title = "Suitable Oyster Aquaculture Areas",
+    title.position = c("center", "top"),
+    main.title.size = 1,
+    legend.position = c("left", "bottom"), 
+    legend.outside = TRUE,  
+    legend.outside.position = "right",
+    legend.outside.size = 0.5
+  ) +
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_compass(position = c("right", "top"),
+             size = 1)
+
+# create table of data
+table_data <- suitable_area_with_geometry %>%
+  st_drop_geometry() %>% 
+  select(rgn, area_km2) %>%
+  arrange(desc(area_km2)) 
+
+table_data %>%
+  kable(
+    caption = "Suitable Oyster Habitat by Area (km²)",
+    col.names = c("EEZ", "Suitable Area (km²)"),
+    format = "html"
+  ) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+
+
+```
