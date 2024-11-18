@@ -25,6 +25,8 @@ library(terra)
 library(kableExtra)
 ```
 
+Part 1: Data Processing
+
 ```{r}
 #load in data
 sst_2008 <- rast(here("data", "average_annual_sst_2008.tif"))
@@ -55,12 +57,14 @@ stack_check <- c(depth_new, mean_sst)
 #success
 ```
 
+Part 2: Oysters
+
 ```{r}
-#set paramaters
-sst_min <- 10
-sst_max <- 20
-depth_min <- -100
-depth_max <- -50
+#set oyster paramaters
+sst_min <- 11
+sst_max <- 30
+depth_min <- -70
+depth_max <- -0
 
 
 #resample sst to oyster conditions, 1 optimal, 0 not optimal
@@ -112,7 +116,7 @@ tm_shape(suitable_area_with_geometry) +
   tm_fill(col = "area_km2", title = "Suitable Area (km²)", palette = "Blues") +
   tm_borders() +
   tm_layout(
-    main.title = "Suitable X Aquaculture Areas",
+    main.title = "Suitable Oyster Aquaculture Areas",
     title.position = c("center", "top"),
     main.title.size = 1,
     legend.position = c("left", "bottom"), 
@@ -132,7 +136,93 @@ table_data <- suitable_area_with_geometry %>%
 
 table_data %>%
   kable(
-    caption = "Suitable X Habitat by Area (km²)",
+    caption = "Suitable Oyster Habitat by Area (km²)",
+    col.names = c("EEZ", "Suitable Area (km²)"),
+    format = "html"
+  ) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+Part 3: Red Abalone
+
+```{r}
+#set abalone paramaters
+sst_min <- 8
+sst_max <- 18
+depth_min <- -24
+depth_max <- -0
+
+
+#resample sst to abalone conditions, 1 optimal, 0 not optimal
+sst_rcl <- matrix(c(sst_min, sst_max, 1,
+                       0, sst_min, 0,
+                       sst_max, Inf, 0),
+                     ncol = 3, byrow = TRUE)
+
+x_sst <- classify(mean_sst, sst_rcl)
+
+#resample depth to abalone conditions, 1 optimal, 0 not optimal
+x_depth_rcl <- matrix(c(depth_min, depth_max, 1,
+                             -Inf, depth_min, 0,
+                             depth_max, Inf, 0),
+                           ncol = 3, byrow = TRUE)
+
+x_depth <- classify(depth_new, x_depth_rcl)
+```
+
+```{r}
+#use map algebra to find suitable locations
+x_locations <- x_sst * x_depth
+```
+
+```{r}
+#rasterize eez data so we can do zonal analysis
+eez_x_raster <- rasterize(eez, x_locations
+                               , field = "rgn")
+
+#calculate cell areas
+cell_area <- cellSize(x_locations, unit = "m")
+
+#combine suitable abalone locations with eez zones
+x_eez_zones <- x_locations * eez_x_raster
+
+#find total area of suitable space by eez
+suitable_area_by_eez <- zonal(cell_area * (x_eez_zones > 0), eez_x_raster, fun = "sum", na.rm = TRUE)
+```
+
+```{r}
+#create dataframe that holds suitable area and geometry of eez
+suitable_area_with_geometry <- suitable_area_by_eez %>%
+  left_join(eez %>% select(rgn, geometry), by = "rgn") %>%
+  mutate(area_km2 = area / 1e6) %>%
+  st_as_sf()
+
+#map of suitable area
+tm_shape(suitable_area_with_geometry) +
+  tm_fill(col = "area_km2", title = "Suitable Area (km²)", palette = "Blues") +
+  tm_borders() +
+  tm_layout(
+    main.title = "Suitable Abalone Aquaculture Areas",
+    title.position = c("center", "top"),
+    main.title.size = 1,
+    legend.position = c("left", "bottom"), 
+    legend.outside = TRUE,  
+    legend.outside.position = "right",
+    legend.outside.size = 0.5
+  ) +
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_compass(position = c("right", "top"),
+             size = 1)
+
+# create table of data
+table_data <- suitable_area_with_geometry %>%
+  st_drop_geometry() %>% 
+  select(rgn, area_km2) %>%
+  arrange(desc(area_km2)) 
+
+table_data %>%
+  kable(
+    caption = "Suitable Abalone Habitat by Area (km²)",
     col.names = c("EEZ", "Suitable Area (km²)"),
     format = "html"
   ) %>%
