@@ -25,20 +25,21 @@ https://github.com/efairbanks000/potential-marine-aquaculture.git
 
 Your repository structure should look like this:
 
-
+```
 potential-marine-aquaculture
-│   README.md
-│   analysis.qmd
-│   .gitignore
+│   README.md 
+│   analysis.qmd 
+│   .gitignore 
 │
-└───data
-    │   wc_regions_clean.shp
-    │   depth.tif
-    │   average_annual_sst_2008.tif
-    │   average_annual_sst_2009.tif
-    │   average_annual_sst_2010.tif
-    │   average_annual_sst_2011.tif
+└───data  
+    │   wc_regions_clean.shp 
+    │   depth.tif 
+    │   average_annual_sst_2008.tif 
+    │   average_annual_sst_2009.tif 
+    │   average_annual_sst_2010.tif 
+    │   average_annual_sst_2011.tif 
     │   average_annual_sst_2012.tif
+```
 
 
 ## Authors
