@@ -12,9 +12,12 @@ This project uses marine organisms' optimal depth and water temperature to explo
 
 Ensure you have the following prerequisites installed:
 
-R (version 4.0 or later)
+R (version 4.0 or later)   
+
 R packages: terra, sf, tidyverse, tmap, testthat, kableExtra
+
 Quarto for rendering reports
+
 Operating System: macOS, Linux, or Windows 10+
 
 ### Installing
@@ -45,6 +48,7 @@ potential-marine-aquaculture
 ## Authors
 
 Eric Fairbanks
+
 efairbanks@ucsb.edu
 
 ## Acknowledgments
