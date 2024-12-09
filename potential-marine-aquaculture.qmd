@@ -1,7 +1,7 @@
 ---
-title: "Prioritizing Potential Aquaculture"
+title: "Potential Marine Aquaculture"
 author: "Eric Fairbanks"
-date: 11-20-2024
+date: 12-9-2024
 execute: 
   eval: true
 format:
@@ -24,8 +24,6 @@ library(terra)
 library(kableExtra)
 ```
 
-### Part 1: Data Processing
-
 ### Load in Temp, Depth, and EEZs
 
 ```{r}
@@ -36,13 +34,13 @@ sst_2010 <- rast(here("data", "average_annual_sst_2010.tif"))
 sst_2011 <- rast(here("data", "average_annual_sst_2011.tif"))
 sst_2012 <- rast(here("data", "average_annual_sst_2012.tif"))
 depth <- rast(here("data", "depth.tif"))
-eez <- st_read(here("data", "wc_regions_clean.shp")) #exclusive economic zones
+eez <- st_read(here("data", "wc_regions_clean.shp"), quiet = TRUE) #exclusive economic zones
 
 #raster stack of sst
 sst_stack <- c(sst_2008, sst_2009, sst_2010, sst_2011, sst_2012)
 ```
 
-### Clean up Data
+### Clean Up Data
 
 ```{r}
 #mean raster from sst raster_stack
@@ -60,200 +58,120 @@ stack_check <- c(depth_new, mean_sst)
 #success
 ```
 
-### Part 2: Oysters
-
-### Set Parameters and Reclassifications
+### Create Generalized Function
 
 ```{r}
-#set oyster paramaters
-sst_min <- 11
-sst_max <- 30
-depth_min <- -70
-depth_max <- -0
+suitable_locations <- function(mean_sst, depth_new, eez, 
+                                  sst_min, sst_max, depth_min, depth_max, 
+                                  title, palette = "Blues") {
+  
+  #reclassify sst
+  sst_rcl <- matrix(c(sst_min, sst_max, 1,
+                      0, sst_min, 0,
+                      sst_max, Inf, 0), 
+                    ncol = 3, byrow = TRUE)
+  sst_suitable <- classify(mean_sst, sst_rcl)
+  
+  #reclassify depth
+  depth_rcl <- matrix(c(depth_min, depth_max, 1,
+                        -Inf, depth_min, 0,
+                        depth_max, Inf, 0), 
+                      ncol = 3, byrow = TRUE)
+  depth_suitable <- classify(depth_new, depth_rcl)
+  
+  #identify suitable locations
+  suitable_locations <- lapp(c(sst_suitable, depth_suitable), fun = function(x, y) x * y)
+  
+  #rasterize EEZ shapefile and calculate suitable area
+  eez_raster <- rasterize(eez, suitable_locations, field = "rgn")
+  cell_area <- cellSize(suitable_locations, unit = "m")
+  eez_suitability <- suitable_locations * eez_raster
+  suitable_area_by_eez <- zonal(cell_area * (eez_suitability > 0), eez_raster, fun = "sum", na.rm = TRUE)
+  
+  #merge results with EEZ shapefile
+  suitable_area_sf <- suitable_area_by_eez %>%
+    left_join(eez %>% select(rgn, geometry), by = "rgn") %>%
+    mutate(area_km2 = area / 1e6)  %>%
+    st_as_sf()
+  
+  #map
+  map <- tm_shape(suitable_area_sf) +
+    tm_fill(col = "area_km2", title = "Suitable Area (km²)", palette = palette) +
+    tm_borders() +
+    tm_layout(
+      main.title = title,
+      title.position = c("center", "top"),
+      main.title.size = 1,
+      legend.position = c("left", "bottom"), 
+      legend.outside = TRUE,  
+      legend.outside.position = "right",
+      legend.outside.size = 0.5
+    ) +
+    tm_scale_bar(position = c("left", "bottom")) +
+    tm_compass(position = c("right", "top"), size = 1)
+  
+  #table
+  table <- suitable_area_sf %>%
+    st_drop_geometry() %>% 
+    select(rgn, area_km2) %>%
+    arrange(desc(area_km2)) %>%
+    kable(
+      caption = "Suitable Habitat by Area (km²)",
+      col.names = c("EEZ", "Suitable Area (km²)"),
+      format = "html"
+    ) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+  
+  return(list(map = map, table = table))
+}
 
-
-#resample sst to oyster conditions, 1 optimal, 0 not optimal
-sst_rcl <- matrix(c(sst_min, sst_max, 1,
-                       0, sst_min, 0,
-                       sst_max, Inf, 0),
-                     ncol = 3, byrow = TRUE)
-
-x_sst <- classify(mean_sst, sst_rcl)
-
-#resample depth to oyster conditions, 1 optimal, 0 not optimal
-x_depth_rcl <- matrix(c(depth_min, depth_max, 1,
-                             -Inf, depth_min, 0,
-                             depth_max, Inf, 0),
-                           ncol = 3, byrow = TRUE)
-
-x_depth <- classify(depth_new, x_depth_rcl)
 ```
 
-### Find Suitable Locations
+### Run Oyster Function
 
-```{r}
-#use map algebra to find suitable locations
-x_locations <- x_sst * x_depth
+```{r results = "asis"}
+oyster_results <- suitable_locations(
+  mean_sst = mean_sst, 
+  depth_new = depth_new, 
+  eez = eez, 
+  sst_min = 11, 
+  sst_max = 30, 
+  depth_min = -70, 
+  depth_max = -0, 
+  title = "Suitable Oyster Aquaculture Areas"
+)
+
+print(oyster_results$map)
+print(oyster_results$table)
 ```
 
-### Calculate Suitable Area for Each EEZ
+### Run Abalone Fucntion
 
-```{r}
-#rasterize eez data so we can do zonal analysis
-eez_x_raster <- rasterize(eez, x_locations
-                               , field = "rgn")
+```{r results = "asis"}
+abalone_results <- suitable_locations(
+  mean_sst = mean_sst, 
+  depth_new = depth_new, 
+  eez = eez, 
+  sst_min = 8, 
+  sst_max = 18, 
+  depth_min = -24, 
+  depth_max = -0, 
+  title = "Suitable Abalone Aquaculture Areas"
+)
 
-#calculate cell areas
-cell_area <- cellSize(x_locations, unit = "m")
-
-#combine suitable oyster locations with eez zones
-x_eez_zones <- x_locations * eez_x_raster
-
-#find total area of suitable space by eez
-suitable_area_by_eez <- zonal(cell_area * (x_eez_zones > 0), eez_x_raster, fun = "sum", na.rm = TRUE)
-```
-
-### Visualize Findings
-
-```{r}
-#create dataframe that holds suitable area and geometry of eez
-suitable_area_with_geometry <- suitable_area_by_eez %>%
-  left_join(eez %>% select(rgn, geometry), by = "rgn") %>%
-  mutate(area_km2 = area / 1e6) %>%
-  st_as_sf()
-
-#map of suitable area
-tm_shape(suitable_area_with_geometry) +
-  tm_fill(col = "area_km2", title = "Suitable Area (km²)", palette = "Blues") +
-  tm_borders() +
-  tm_layout(
-    main.title = "Suitable Oyster Aquaculture Areas",
-    title.position = c("center", "top"),
-    main.title.size = 1,
-    legend.position = c("left", "bottom"), 
-    legend.outside = TRUE,  
-    legend.outside.position = "right",
-    legend.outside.size = 0.5
-  ) +
-  tm_scale_bar(position = c("left", "bottom")) +
-  tm_compass(position = c("right", "top"),
-             size = 1)
-
-# create table of data
-table_data <- suitable_area_with_geometry %>%
-  st_drop_geometry() %>% 
-  select(rgn, area_km2) %>%
-  arrange(desc(area_km2)) 
-
-table_data %>%
-  kable(
-    caption = "Suitable Oyster Habitat by Area (km²)",
-    col.names = c("EEZ", "Suitable Area (km²)"),
-    format = "html"
-  ) %>%
-   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
-```
-
-### Part 3: Red Abalone
-
-### Set Parameters and Reclassifications
-
-```{r}
-#set abalone paramaters
-sst_min <- 8
-sst_max <- 18
-depth_min <- -24
-depth_max <- -0
-
-
-#resample sst to abalone conditions, 1 optimal, 0 not optimal
-sst_rcl <- matrix(c(sst_min, sst_max, 1,
-                       0, sst_min, 0,
-                       sst_max, Inf, 0),
-                     ncol = 3, byrow = TRUE)
-
-x_sst <- classify(mean_sst, sst_rcl)
-
-#resample depth to abalone conditions, 1 optimal, 0 not optimal
-x_depth_rcl <- matrix(c(depth_min, depth_max, 1,
-                             -Inf, depth_min, 0,
-                             depth_max, Inf, 0),
-                           ncol = 3, byrow = TRUE)
-
-x_depth <- classify(depth_new, x_depth_rcl)
-```
-
-### Find Suitable Locations
-
-```{r}
-#use map algebra to find suitable locations
-x_locations <- x_sst * x_depth
-```
-
-### Calculate Suitable Area for Each EEZ
-
-```{r}
-#rasterize eez data so we can do zonal analysis
-eez_x_raster <- rasterize(eez, x_locations
-                               , field = "rgn")
-
-#calculate cell areas
-cell_area <- cellSize(x_locations, unit = "m")
-
-#combine suitable abalone locations with eez zones
-x_eez_zones <- x_locations * eez_x_raster
-
-#find total area of suitable space by eez
-suitable_area_by_eez <- zonal(cell_area * (x_eez_zones > 0), eez_x_raster, fun = "sum", na.rm = TRUE)
-```
-
-### Visualize Findings
-
-```{r}
-#create dataframe that holds suitable area and geometry of eez
-suitable_area_with_geometry <- suitable_area_by_eez %>%
-  left_join(eez %>% select(rgn, geometry), by = "rgn") %>%
-  mutate(area_km2 = area / 1e6) %>%
-  st_as_sf()
-
-#map of suitable area
-tm_shape(suitable_area_with_geometry) +
-  tm_fill(col = "area_km2", title = "Suitable Area (km²)", palette = "Blues") +
-  tm_borders() +
-  tm_layout(
-    main.title = "Suitable Abalone Aquaculture Areas",
-    title.position = c("center", "top"),
-    main.title.size = 1,
-    legend.position = c("left", "bottom"), 
-    legend.outside = TRUE,  
-    legend.outside.position = "right",
-    legend.outside.size = 0.5
-  ) +
-  tm_scale_bar(position = c("left", "bottom")) +
-  tm_compass(position = c("right", "top"),
-             size = 1)
-
-# create table of data
-table_data <- suitable_area_with_geometry %>%
-  st_drop_geometry() %>% 
-  select(rgn, area_km2) %>%
-  arrange(desc(area_km2)) 
-
-table_data %>%
-  kable(
-    caption = "Suitable Abalone Habitat by Area (km²)",
-    col.names = c("EEZ", "Suitable Area (km²)"),
-    format = "html"
-  ) %>%
-   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+print(abalone_results$map)
+print(abalone_results$table)
 ```
 
 ### Data Citations
 
-\| Suitable growing conditions \| SeaLifeBase. 2024. Species Temperature and Depth Requirements for Marine Aquaculture. \| <https://www.sealifebase.ca/search.php> \|
+| Suitable growing conditions | SeaLifeBase. 2024. Species Temperature and Depth Requirements for Marine Aquaculture. | https://www.sealifebase.ca/search.php |
 
-\| Sea surface temperatures \| NOAA Coral Reef Watch. 2008-2012. 5km Daily Global Satellite Sea Surface Temperature Anomaly v3.1. \| <https://coralreefwatch.noaa.gov/product/5km/index_5km_ssta.php> \|
 
-\| Bathymetry \| General Bathymetric Chart of the Oceans (GEBCO). 2024. Gridded Bathymetry Data. \| <https://www.gebco.net/data_and_products/gridded_bathymetry_data/#area> \|
+| Sea surface temperatures | NOAA Coral Reef Watch. 2008-2012. 5km Daily Global Satellite Sea Surface Temperature Anomaly v3.1. | https://coralreefwatch.noaa.gov/product/5km/index_5km_ssta.php |
 
-\| Exclusive economic zones \| Marine Regions. 2024. Exclusive Economic Zones (EEZ) Boundaries, West Coast of the United States. \| <https://www.marineregions.org/eez.php> \|
+
+| Bathymetry | General Bathymetric Chart of the Oceans (GEBCO). 2024. Gridded Bathymetry Data. | https://www.gebco.net/data_and_products/gridded_bathymetry_data/#area |
+
+
+| Exclusive economic zones | Marine Regions. 2024. Exclusive Economic Zones (EEZ) Boundaries, West Coast of the United States. | https://www.marineregions.org/eez.php |
